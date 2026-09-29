@@ -2,6 +2,8 @@
 
 This crate abstracts over a Unicode back end for the [`idna`](https://docs.rs/crate/idna/latest) crate.
 
+This branch uses the `idn` crate as the Unicode back end.
+
 To work around the lack of [`global-features`](https://internals.rust-lang.org/t/pre-rfc-mutually-excusive-global-features/19618) in Cargo, this crate allows the top level `Cargo.lock` to choose an alternative Unicode back end for the `idna` crate by pinning a version of this crate.
 
 `idna` depends on version 1 of this crate. The version stream 1.2.x uses ICU4X, the version stream 1.1.x uses unicode-rs, and the version stream 1.0.x has a stub implementation without an actual Unicode back end.

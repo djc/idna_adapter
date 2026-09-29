@@ -22,103 +22,126 @@
 
 #![no_std]
 
-use icu_normalizer::uts46::Uts46MapperBorrowed;
-use icu_properties::props::GeneralCategory;
-use icu_properties::CodePointMapDataBorrowed;
+use idn::{Mode, Normalize};
 
 /// Turns a joining type into a mask for comparing with multiple type at once.
-const fn joining_type_to_mask(jt: icu_properties::props::JoiningType) -> u32 {
-    1u32 << jt.to_icu4c_value()
+const fn joining_type_to_mask(jt: idn::JoiningType) -> u32 {
+    // In the order of the variants in `idn`, so that this compiles to a shift
+    1u32 << match jt {
+        idn::JoiningType::DualJoining => 0,
+        idn::JoiningType::JoinCausing => 1,
+        idn::JoiningType::LeftJoining => 2,
+        idn::JoiningType::NonJoining => 3,
+        idn::JoiningType::RightJoining => 4,
+        idn::JoiningType::Transparent => 5,
+        _ => 31,
+    }
 }
 
 /// Mask for checking for both left and dual joining.
 pub const LEFT_OR_DUAL_JOINING_MASK: JoiningTypeMask = JoiningTypeMask(
-    joining_type_to_mask(icu_properties::props::JoiningType::LeftJoining)
-        | joining_type_to_mask(icu_properties::props::JoiningType::DualJoining),
+    joining_type_to_mask(idn::JoiningType::LeftJoining)
+        | joining_type_to_mask(idn::JoiningType::DualJoining),
 );
 
 /// Mask for checking for both left and dual joining.
 pub const RIGHT_OR_DUAL_JOINING_MASK: JoiningTypeMask = JoiningTypeMask(
-    joining_type_to_mask(icu_properties::props::JoiningType::RightJoining)
-        | joining_type_to_mask(icu_properties::props::JoiningType::DualJoining),
+    joining_type_to_mask(idn::JoiningType::RightJoining)
+        | joining_type_to_mask(idn::JoiningType::DualJoining),
 );
 
 /// Turns a bidi class into a mask for comparing with multiple classes at once.
-const fn bidi_class_to_mask(bc: icu_properties::props::BidiClass) -> u32 {
-    1u32 << bc.to_icu4c_value()
+const fn bidi_class_to_mask(bc: idn::BidiClass) -> u32 {
+    // In the order of the variants in `idn`, so that this compiles to a shift
+    1u32 << match bc {
+        idn::BidiClass::LeftToRight => 0,
+        idn::BidiClass::RightToLeft => 1,
+        idn::BidiClass::ArabicLetter => 2,
+        idn::BidiClass::EuropeanNumber => 3,
+        idn::BidiClass::EuropeanSeparator => 4,
+        idn::BidiClass::EuropeanTerminator => 5,
+        idn::BidiClass::ArabicNumber => 6,
+        idn::BidiClass::CommonSeparator => 7,
+        idn::BidiClass::NonspacingMark => 8,
+        idn::BidiClass::BoundaryNeutral => 9,
+        idn::BidiClass::ParagraphSeparator => 10,
+        idn::BidiClass::SegmentSeparator => 11,
+        idn::BidiClass::WhiteSpace => 12,
+        idn::BidiClass::OtherNeutral => 13,
+        idn::BidiClass::LeftToRightEmbedding => 14,
+        idn::BidiClass::LeftToRightOverride => 15,
+        idn::BidiClass::RightToLeftEmbedding => 16,
+        idn::BidiClass::RightToLeftOverride => 17,
+        idn::BidiClass::PopDirectionalFormat => 18,
+        idn::BidiClass::LeftToRightIsolate => 19,
+        idn::BidiClass::RightToLeftIsolate => 20,
+        idn::BidiClass::FirstStrongIsolate => 21,
+        idn::BidiClass::PopDirectionalIsolate => 22,
+        _ => 31,
+    }
 }
 
 /// Mask for checking if the domain is a bidi domain.
 pub const RTL_MASK: BidiClassMask = BidiClassMask(
-    bidi_class_to_mask(icu_properties::props::BidiClass::RightToLeft)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicLetter)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicNumber),
+    bidi_class_to_mask(idn::BidiClass::RightToLeft)
+        | bidi_class_to_mask(idn::BidiClass::ArabicLetter)
+        | bidi_class_to_mask(idn::BidiClass::ArabicNumber),
 );
 
 /// Mask for allowable bidi classes in the first character of a label
 /// (either LTR or RTL) in a bidi domain.
 pub const FIRST_BC_MASK: BidiClassMask = BidiClassMask(
-    bidi_class_to_mask(icu_properties::props::BidiClass::LeftToRight)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::RightToLeft)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicLetter),
+    bidi_class_to_mask(idn::BidiClass::LeftToRight)
+        | bidi_class_to_mask(idn::BidiClass::RightToLeft)
+        | bidi_class_to_mask(idn::BidiClass::ArabicLetter),
 );
 
 // Mask for allowable bidi classes of the last (non-Non-Spacing Mark)
 // character in an LTR label in a bidi domain.
 pub const LAST_LTR_MASK: BidiClassMask = BidiClassMask(
-    bidi_class_to_mask(icu_properties::props::BidiClass::LeftToRight)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanNumber),
+    bidi_class_to_mask(idn::BidiClass::LeftToRight)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanNumber),
 );
 
 // Mask for allowable bidi classes of the last (non-Non-Spacing Mark)
 // character in an RTL label in a bidi domain.
 pub const LAST_RTL_MASK: BidiClassMask = BidiClassMask(
-    bidi_class_to_mask(icu_properties::props::BidiClass::RightToLeft)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicLetter)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanNumber)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicNumber),
+    bidi_class_to_mask(idn::BidiClass::RightToLeft)
+        | bidi_class_to_mask(idn::BidiClass::ArabicLetter)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanNumber)
+        | bidi_class_to_mask(idn::BidiClass::ArabicNumber),
 );
 
 // Mask for allowable bidi classes of the middle characters in an LTR label in a bidi domain.
 pub const MIDDLE_LTR_MASK: BidiClassMask = BidiClassMask(
-    bidi_class_to_mask(icu_properties::props::BidiClass::LeftToRight)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanNumber)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanSeparator)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::CommonSeparator)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanTerminator)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::OtherNeutral)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::BoundaryNeutral)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::NonspacingMark),
+    bidi_class_to_mask(idn::BidiClass::LeftToRight)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanNumber)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanSeparator)
+        | bidi_class_to_mask(idn::BidiClass::CommonSeparator)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanTerminator)
+        | bidi_class_to_mask(idn::BidiClass::OtherNeutral)
+        | bidi_class_to_mask(idn::BidiClass::BoundaryNeutral)
+        | bidi_class_to_mask(idn::BidiClass::NonspacingMark),
 );
 
 // Mask for allowable bidi classes of the middle characters in an RTL label in a bidi domain.
 pub const MIDDLE_RTL_MASK: BidiClassMask = BidiClassMask(
-    bidi_class_to_mask(icu_properties::props::BidiClass::RightToLeft)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicLetter)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::ArabicNumber)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanNumber)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanSeparator)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::CommonSeparator)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::EuropeanTerminator)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::OtherNeutral)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::BoundaryNeutral)
-        | bidi_class_to_mask(icu_properties::props::BidiClass::NonspacingMark),
+    bidi_class_to_mask(idn::BidiClass::RightToLeft)
+        | bidi_class_to_mask(idn::BidiClass::ArabicLetter)
+        | bidi_class_to_mask(idn::BidiClass::ArabicNumber)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanNumber)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanSeparator)
+        | bidi_class_to_mask(idn::BidiClass::CommonSeparator)
+        | bidi_class_to_mask(idn::BidiClass::EuropeanTerminator)
+        | bidi_class_to_mask(idn::BidiClass::OtherNeutral)
+        | bidi_class_to_mask(idn::BidiClass::BoundaryNeutral)
+        | bidi_class_to_mask(idn::BidiClass::NonspacingMark),
 );
-
-/// Turns a genecal category into a mask for comparing with multiple categories at once.
-const fn general_category_to_mask(gc: GeneralCategory) -> u32 {
-    1 << (gc as u32)
-}
-
-/// Mask for the disallowed general categories of the first character in a label.
-const MARK_MASK: u32 = general_category_to_mask(GeneralCategory::NonspacingMark)
-    | general_category_to_mask(GeneralCategory::SpacingMark)
-    | general_category_to_mask(GeneralCategory::EnclosingMark);
 
 /// Value for the Joining_Type Unicode property.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct JoiningType(icu_properties::props::JoiningType);
+pub struct JoiningType(idn::JoiningType);
 
 impl JoiningType {
     /// Returns the corresponding `JoiningTypeMask`.
@@ -130,7 +153,7 @@ impl JoiningType {
     // `true` iff this value is the Transparent value.
     #[inline(always)]
     pub fn is_transparent(self) -> bool {
-        self.0 == icu_properties::props::JoiningType::Transparent
+        self.0 == idn::JoiningType::Transparent
     }
 }
 
@@ -151,7 +174,7 @@ impl JoiningTypeMask {
 /// Value for the Bidi_Class Unicode property.
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct BidiClass(icu_properties::props::BidiClass);
+pub struct BidiClass(idn::BidiClass);
 
 impl BidiClass {
     /// Returns the corresponding `BidiClassMask`.
@@ -163,25 +186,25 @@ impl BidiClass {
     /// `true` iff this value is Left_To_Right
     #[inline(always)]
     pub fn is_ltr(self) -> bool {
-        self.0 == icu_properties::props::BidiClass::LeftToRight
+        self.0 == idn::BidiClass::LeftToRight
     }
 
     /// `true` iff this value is Nonspacing_Mark
     #[inline(always)]
     pub fn is_nonspacing_mark(self) -> bool {
-        self.0 == icu_properties::props::BidiClass::NonspacingMark
+        self.0 == idn::BidiClass::NonspacingMark
     }
 
     /// `true` iff this value is European_Number
     #[inline(always)]
     pub fn is_european_number(self) -> bool {
-        self.0 == icu_properties::props::BidiClass::EuropeanNumber
+        self.0 == idn::BidiClass::EuropeanNumber
     }
 
     /// `true` iff this value is Arabic_Number
     #[inline(always)]
     pub fn is_arabic_number(self) -> bool {
-        self.0 == icu_properties::props::BidiClass::ArabicNumber
+        self.0 == idn::BidiClass::ArabicNumber
     }
 }
 
@@ -200,80 +223,63 @@ impl BidiClassMask {
 }
 
 /// An adapter between a Unicode back end an the `idna` crate.
-pub struct Adapter {
-    mapper: Uts46MapperBorrowed<'static>,
-    general_category: CodePointMapDataBorrowed<'static, GeneralCategory>,
-    bidi_class: CodePointMapDataBorrowed<'static, icu_properties::props::BidiClass>,
-    joining_type: CodePointMapDataBorrowed<'static, icu_properties::props::JoiningType>,
-}
-
-#[cfg(feature = "compiled_data")]
-impl Default for Adapter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub struct Adapter(());
 
 impl Adapter {
     /// Constructor using data compiled into the binary.
-    #[cfg(feature = "compiled_data")]
     #[inline(always)]
     pub const fn new() -> Self {
-        Self {
-            mapper: Uts46MapperBorrowed::new(),
-            general_category: icu_properties::CodePointMapData::<GeneralCategory>::new(),
-            bidi_class: icu_properties::CodePointMapData::<icu_properties::props::BidiClass>::new(),
-            joining_type:
-                icu_properties::CodePointMapData::<icu_properties::props::JoiningType>::new(),
-        }
+        Self(())
     }
 
     /// `true` iff the Canonical_Combining_Class of `c` is Virama.
     #[inline(always)]
     pub fn is_virama(&self, c: char) -> bool {
-        self.mapper.is_virama(c)
+        idn::is_virama(c)
     }
 
     /// `true` iff the General_Category of `c` is Mark, i.e. any of Nonspacing_Mark,
     /// Spacing_Mark, or Enclosing_Mark.
     #[inline(always)]
     pub fn is_mark(&self, c: char) -> bool {
-        (general_category_to_mask(self.general_category.get(c)) & MARK_MASK) != 0
+        idn::is_mark(c)
     }
 
     /// Returns the Bidi_Class of `c`.
     #[inline(always)]
     pub fn bidi_class(&self, c: char) -> BidiClass {
-        BidiClass(self.bidi_class.get(c))
+        BidiClass(idn::BidiClass::from(c))
     }
 
     /// Returns the Joining_Type of `c`.
     #[inline(always)]
     pub fn joining_type(&self, c: char) -> JoiningType {
-        JoiningType(self.joining_type.get(c))
+        JoiningType(idn::JoiningType::from(c))
     }
 
-    /// See the [method of the same name in `icu_normalizer`][1] for the
+    /// See [`Normalize`] with [`Mode::Map`] for the
     /// exact semantics.
-    ///
-    /// [1]: https://docs.rs/icu_normalizer/latest/icu_normalizer/uts46/struct.Uts46Mapper.html#method.map_normalize
     #[inline(always)]
     pub fn map_normalize<'delegate, I: Iterator<Item = char> + 'delegate>(
         &'delegate self,
         iter: I,
     ) -> impl Iterator<Item = char> + 'delegate {
-        self.mapper.map_normalize(iter)
+        Normalize::new(iter, Mode::Map)
     }
 
-    /// See the [method of the same name in `icu_normalizer`][1] for the
+    /// See [`Normalize`] with [`Mode::Validate`] for the
     /// exact semantics.
-    ///
-    /// [1]: https://docs.rs/icu_normalizer/latest/icu_normalizer/uts46/struct.Uts46Mapper.html#method.normalize_validate
     #[inline(always)]
     pub fn normalize_validate<'delegate, I: Iterator<Item = char> + 'delegate>(
         &'delegate self,
         iter: I,
     ) -> impl Iterator<Item = char> + 'delegate {
-        self.mapper.normalize_validate(iter)
+        Normalize::new(iter, Mode::Validate)
+    }
+}
+
+impl Default for Adapter {
+    fn default() -> Self {
+        Self::new()
     }
 }
